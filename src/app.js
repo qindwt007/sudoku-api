@@ -12,7 +12,8 @@ const leaderboardRouter = require('./routes/leaderboard');
 const adRouter = require('./routes/ad');
 
 const app = new Koa();
-const PORT = process.env.PORT || 8000;
+// 抖音云模板部署固定监听 8000 端口
+const PORT = 8000;
 
 // ── 全局错误处理 ──────────────────────────────────────────────
 app.on('error', (err, ctx) => {
