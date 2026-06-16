@@ -11,10 +11,10 @@ RUN npm install --omit=dev
 # 复制源代码
 COPY . .
 
-# 云托管默认监听 8080
-EXPOSE 8080
+# 抖音云模板部署默认监听 8000
+EXPOSE 8000
 
 ENV NODE_ENV=production
-ENV PORT=8080
+ENV PORT=8000
 
 CMD ["node", "src/app.js"]

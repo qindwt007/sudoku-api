@@ -12,7 +12,7 @@ const leaderboardRouter = require('./routes/leaderboard');
 const adRouter = require('./routes/ad');
 
 const app = new Koa();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8000;
 
 // ── 全局错误处理 ──────────────────────────────────────────────
 app.on('error', (err, ctx) => {
