@@ -7,7 +7,7 @@ const { signToken, authMiddleware } = require('../middleware/auth');
 
 const router = new Router({ prefix: '/api/auth' });
 const APP_ID = process.env.APP_ID || 'ttffeb8956618f26a001';
-const APP_SECRET = process.env.APP_SECRET || '';
+const APP_SECRET = process.env.APP_SECRET || '8e2428402dcb67fb6c6ea128b8ac2e80b4d8a9fc';
 
 /**
  * POST /api/auth/login
