@@ -3,10 +3,10 @@ const Router = require('koa-router');
 const axios = require('axios');
 const crypto = require('crypto');
 const { get, set } = require('../db/kv');
-const { signToken } = require('../middleware/auth');
+const { signToken, authMiddleware } = require('../middleware/auth');
 
 const router = new Router({ prefix: '/api/auth' });
-const APP_ID = process.env.APP_ID || 'tt4d553be8d3318e9402';
+const APP_ID = process.env.APP_ID || 'ttffeb8956618f26a001';
 const APP_SECRET = process.env.APP_SECRET || '';
 
 /**
@@ -28,23 +28,19 @@ router.post('/login', async (ctx) => {
   try {
     const res = await axios.get('https://developer.toutiao.com/api/apps/jscode2session', {
       params: { appid: APP_ID, secret: APP_SECRET, code },
-      timeout: 5000
+      timeout: 8000
     });
     const data = res.data;
     if (data.error || !data.openid) {
       ctx.status = 400;
-      ctx.body = { code: 400, msg: `抖音 code2session 失败: ${data.errmsg || '未知错误'}` };
+      ctx.body = { code: 400, msg: `抖音 code2session 失败: ${data.errmsg || JSON.stringify(data)}` };
       return;
     }
     openId = data.openid;
   } catch (e) {
-    if (process.env.NODE_ENV === 'development' && !APP_SECRET) {
-      openId = `dev_${code}`;
-    } else {
-      ctx.status = 500;
-      ctx.body = { code: 500, msg: '调用抖音 API 失败，请稍后重试' };
-      return;
-    }
+    ctx.status = 500;
+    ctx.body = { code: 500, msg: '调用抖音 API 失败，请稍后重试' };
+    return;
   }
 
   // 从 KV 查询或创建用户
@@ -77,6 +73,35 @@ router.post('/login', async (ctx) => {
       token,
       userInfo: { id: user.id, nickname: user.nickname, avatarUrl: user.avatarUrl }
     }
+  };
+});
+
+/**
+ * POST /api/auth/update-profile
+ * 更新用户昵称和头像
+ * Body: { nickname, avatarUrl }
+ */
+router.post('/update-profile', authMiddleware, async (ctx) => {
+  const { openId } = ctx.state.user;
+  const { nickname, avatarUrl } = ctx.request.body;
+
+  const userKey = `user:${openId}`;
+  let user = await get(userKey);
+  if (!user) {
+    ctx.status = 404;
+    ctx.body = { code: 404, msg: '用户不存在' };
+    return;
+  }
+
+  if (nickname) user.nickname = nickname;
+  if (avatarUrl) user.avatarUrl = avatarUrl;
+  user.updatedAt = Date.now();
+  await set(userKey, user);
+
+  ctx.body = {
+    code: 0,
+    msg: 'ok',
+    data: { userInfo: { id: user.id, nickname: user.nickname, avatarUrl: user.avatarUrl } }
   };
 });
 
