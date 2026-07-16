@@ -1,0 +1,21 @@
+{
+  "name": "magic-number-maze-cross-platform-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "cors": "2.8.5",
+    "express": "5.1.0",
+    "multer": "2.0.1",
+    "sharp": "0.33.5",
+    "tesseract.js": "^7.0.0"
+  }
+}
