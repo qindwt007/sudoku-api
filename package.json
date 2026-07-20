@@ -1,6 +1,6 @@
 {
   "name": "magic-number-maze-cross-platform-api",
-  "version": "1.0.0",
+  "version": "1.7.1-beta.2",
   "private": true,
   "main": "index.js",
   "engines": {

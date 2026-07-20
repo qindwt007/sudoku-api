@@ -5,6 +5,7 @@ const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const core = require('./sudoku-core')
+const virtualCatalog = require('./puzzle-catalog-core')
 const { recognizeSudokuDigits } = require('./local-ocr')
 
 const PORT = Number(process.env._FAAS_RUNTIME_PORT || process.env.PORT || 8080)
@@ -15,14 +16,14 @@ const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '*').split(',').ma
 const PUZZLE_LIBRARY_FILE = process.env.PUZZLE_LIBRARY_FILE || path.join(__dirname, 'data', 'high-frequency-puzzles.json')
 const REMOTE_CONFIG_FILE = process.env.REMOTE_CONFIG_FILE || path.join(__dirname, 'data', 'remote-config.json')
 const DEFAULT_REMOTE_CONFIG = {
-  version: 'v1.6.0-alpha.1-default',
+  version: 'v1.7.1-beta.2-default',
   expiresInSeconds: 21600,
   flags: {
-    homeV2: { enabled: false, rolloutPercent: 0 },
-    onboardingV1: { enabled: false, rolloutPercent: 0 },
-    dailyChallenge: { enabled: false, rolloutPercent: 0 },
-    resultCardV2: { enabled: false, rolloutPercent: 0 },
-    adaptiveDifficulty: { enabled: false, rolloutPercent: 0 },
+    homeV2: { enabled: true, rolloutPercent: 100 },
+    onboardingV1: { enabled: true, rolloutPercent: 100 },
+    dailyChallenge: { enabled: true, rolloutPercent: 100 },
+    resultCardV2: { enabled: true, rolloutPercent: 100 },
+    adaptiveDifficulty: { enabled: true, rolloutPercent: 100 },
     ocrRepair: { enabled: false, rolloutPercent: 0 },
     achievements: { enabled: false, rolloutPercent: 0 },
     friendChallenge: { enabled: false, rolloutPercent: 0 },
@@ -84,9 +85,9 @@ function choosePuzzleType(value) {
 function readStore() {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
-    return Object.assign({ records: [], ocrUsage: {}, analyticsEvents: [] }, parsed)
+    return Object.assign({ records: [], ocrUsage: {}, analyticsEvents: [], dailyChallenges: {}, dailyResults: [], userProgress: {} }, parsed)
   } catch (error) {
-    return { records: [], ocrUsage: {}, analyticsEvents: [] }
+    return { records: [], ocrUsage: {}, analyticsEvents: [], dailyChallenges: {}, dailyResults: [], userProgress: {} }
   }
 }
 
@@ -172,19 +173,66 @@ function submitAnalyticsBatch(event, identity) {
 function createPuzzle(difficulty, requestedType) {
   const key = core.CONFIG[difficulty] ? difficulty : 'easy'
   const puzzleType = choosePuzzleType(requestedType)
-  const sameDifficulty = puzzleLibrary.filter(item => item.difficulty === key)
-  const typed = sameDifficulty.filter(item => item.puzzleType === puzzleType)
-  const cached = typed.length ? typed : sameDifficulty
-  const generated = cached.length ? cached[Math.floor(Math.random() * cached.length)] : Object.assign({ puzzleType, typeLabel: PUZZLE_TYPES[puzzleType].label, tags: PUZZLE_TYPES[puzzleType].tags }, core.generatePuzzle(key))
-  return {
-    puzzleId: generated.puzzleId || `rest_${hash(JSON.stringify(generated.puzzle)).slice(0, 20)}`,
-    difficulty: key,
-    puzzle: generated.puzzle,
-    coverage: generated.coverage,
-    puzzleType: generated.puzzleType || puzzleType,
-    typeLabel: generated.typeLabel || PUZZLE_TYPES[puzzleType].label,
-    tags: generated.tags || PUZZLE_TYPES[puzzleType].tags
+  return virtualCatalog.getPuzzle(key, puzzleType)
+}
+
+function dailyDate(value) { return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }
+function dailyDay(value) { const parts = String(value || '').split('-').map(Number); return parts.length === 3 ? Math.floor(Date.UTC(parts[0], parts[1] - 1, parts[2]) / 86400000) : 0 }
+function dailyScore(record) {
+  const base = { beginner: 1000, easy: 1400, medium: 1800, hard: 2300, expert: 3000 }[record.difficulty] || 1800
+  const target = { beginner: 360, easy: 540, medium: 720, hard: 960, expert: 1200 }[record.difficulty] || 720
+  return Math.max(100, base + Math.max(0, Math.round((target - Math.min(target, record.seconds)) * 1.5)) - record.mistakes * 120 - record.hintsUsed * 180)
+}
+
+function getDailyChallenge(event) {
+  const date = dailyDate(event && event.date)
+  const store = readStore()
+  if (!store.dailyChallenges[date]) {
+    const generated = createPuzzle('medium', 'classic')
+    const solved = core.solveBoard(generated.puzzle)
+    store.dailyChallenges[date] = Object.assign({}, generated, { date, puzzleId: `daily_${date}_${hash(JSON.stringify(generated.puzzle)).slice(0, 10)}`, solution: solved.solution, participants: 0, source: 'rest' })
+    writeStore(store)
   }
+  return ok({ challenge: store.dailyChallenges[date] })
+}
+
+function submitDailyResult(event, identity) {
+  const source = event.result || {}
+  const date = dailyDate(source.date)
+  const store = readStore()
+  const challenge = store.dailyChallenges[date]
+  if (!challenge || String(source.puzzleId || '') !== String(challenge.puzzleId || '')) return fail('DAILY_PUZZLE_MISMATCH', '每日题目标识不一致')
+  const seconds = Math.floor(Number(source.seconds || 0))
+  const mistakes = Math.max(0, Math.floor(Number(source.mistakes || 0)))
+  const hintsUsed = Math.max(0, Math.floor(Number(source.hintsUsed || 0)))
+  if (seconds < 1 || seconds > 86400) return fail('INVALID_TIME', '用时数据异常')
+  const score = dailyScore({ difficulty: challenge.difficulty, seconds, mistakes, hintsUsed })
+  const index = store.dailyResults.findIndex(item => item.playerId === identity && item.date === date)
+  const previous = index >= 0 ? store.dailyResults[index] : null
+  const best = !previous || score > previous.score || (score === previous.score && seconds < previous.seconds)
+  const record = { playerId: identity, date, puzzleId: challenge.puzzleId, difficulty: challenge.difficulty, seconds, mistakes, hintsUsed, score, nickname: cleanNickname(event.profile && event.profile.nickname), updatedAt: new Date().toISOString() }
+  if (best && index >= 0) store.dailyResults[index] = record
+  else if (best) { store.dailyResults.push(record); challenge.participants = Number(challenge.participants || 0) + 1 }
+  const progress = store.userProgress[identity] || { streak: 0, longestStreak: 0, lastDailyDate: '' }
+  if (!previous && progress.lastDailyDate !== date) {
+    progress.streak = progress.lastDailyDate && dailyDay(date) - dailyDay(progress.lastDailyDate) === 1 ? Number(progress.streak || 0) + 1 : 1
+    progress.longestStreak = Math.max(Number(progress.longestStreak || 0), progress.streak)
+    progress.lastDailyDate = date
+  }
+  progress.updatedAt = new Date().toISOString()
+  store.userProgress[identity] = progress
+  writeStore(store)
+  const sorted = store.dailyResults.filter(item => item.date === date).sort((a, b) => b.score - a.score || a.seconds - b.seconds)
+  const output = best ? record : previous
+  const rank = Math.max(1, sorted.findIndex(item => item.playerId === identity) + 1)
+  return ok({ result: Object.assign({}, output, { rank, percentile: Math.max(1, Math.round((1 - (rank - 1) / Math.max(1, sorted.length)) * 100)), streak: progress.streak }), best, duplicate: !!previous && !best })
+}
+
+function getDailyRanking(event) {
+  const date = dailyDate(event && event.date)
+  const limit = Math.max(1, Math.min(50, Number(event && event.limit || 20)))
+  const records = readStore().dailyResults.filter(item => item.date === date).sort((a, b) => b.score - a.score || a.seconds - b.seconds).slice(0, limit).map(({ playerId: ignored, ...item }) => item)
+  return ok({ date, records })
 }
 
 function submitScore(event, identity) {
@@ -297,7 +345,9 @@ app.get('/health', (request, response) => response.json({
   service: 'magic-number-maze-api',
   ocr: 'douyin-cloud-local',
   solver: 'DLX',
-  cachedPuzzles: puzzleLibrary.length,
+  cachedPuzzles: virtualCatalog.CATALOG_SIZE,
+  basePuzzles: virtualCatalog.SEEDS.length,
+  catalogVersion: virtualCatalog.CATALOG_VERSION,
   puzzleCatalog: Object.keys(PUZZLE_TYPES).reduce((result, key) => {
     result[key] = puzzleLibrary.filter(item => item.puzzleType === key).length
     return result
@@ -312,6 +362,12 @@ app.post('/v1/function', (request, response) => {
     const identity = playerId(body)
     if (event.action === 'solve') return response.json(ok({ result: core.solveBoard(event.board) }))
     if (event.action === 'getClassicPuzzle') return response.json(ok({ puzzle: createPuzzle(event.difficulty, event.puzzleType) }))
+    if (event.action === 'getDailyChallenge') return response.json(getDailyChallenge(event))
+    if (event.action === 'submitDailyResult') {
+      const result = submitDailyResult(event, identity)
+      return response.status(result.ok ? 200 : 400).json(result)
+    }
+    if (event.action === 'getDailyRanking') return response.json(getDailyRanking(event))
     if (event.action === 'submitScore') {
       const result = submitScore(event, identity)
       return response.status(result.ok ? 200 : 400).json(result)
@@ -367,4 +423,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { app, mapDetections, createPuzzle, puzzleLibrary, remoteConfig, submitAnalyticsBatch, cleanAnalyticsProperties }
+module.exports = { app, mapDetections, createPuzzle, puzzleLibrary, remoteConfig, submitAnalyticsBatch, cleanAnalyticsProperties, getDailyChallenge, submitDailyResult, getDailyRanking }
