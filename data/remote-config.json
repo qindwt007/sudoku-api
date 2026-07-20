@@ -1,12 +1,12 @@
 {
-  "version": "v1.6.0-alpha.1",
+  "version": "v1.7.1-beta.2",
   "expiresInSeconds": 21600,
   "flags": {
-    "homeV2": { "enabled": false, "rolloutPercent": 0 },
-    "onboardingV1": { "enabled": false, "rolloutPercent": 0 },
-    "dailyChallenge": { "enabled": false, "rolloutPercent": 0 },
-    "resultCardV2": { "enabled": false, "rolloutPercent": 0 },
-    "adaptiveDifficulty": { "enabled": false, "rolloutPercent": 0 },
+    "homeV2": { "enabled": true, "rolloutPercent": 100 },
+    "onboardingV1": { "enabled": true, "rolloutPercent": 100 },
+    "dailyChallenge": { "enabled": true, "rolloutPercent": 100 },
+    "resultCardV2": { "enabled": true, "rolloutPercent": 100 },
+    "adaptiveDifficulty": { "enabled": true, "rolloutPercent": 100 },
     "ocrRepair": { "enabled": false, "rolloutPercent": 0 },
     "achievements": { "enabled": false, "rolloutPercent": 0 },
     "friendChallenge": { "enabled": false, "rolloutPercent": 0 },
